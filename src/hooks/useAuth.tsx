@@ -65,64 +65,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [supabaseUser, setSupabaseUser] = useState<SupabaseUser | null>(null);
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    // Initialize authentication state
-    initializeAuth();
-
-    // Listen for auth state changes
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      async (event, session) => {
-        console.log('Auth state changed:', event, session?.user?.email);
-        
-        if (session?.user) {
-          setSupabaseUser(session.user);
-          await fetchUserProfile(session.user.id);
-        } else {
-          setSupabaseUser(null);
-          setUser(null);
-          // Clear any stored demo session
-          localStorage.removeItem('demo-user');
-        }
-        setLoading(false);
-      }
-    );
-
-    return () => subscription.unsubscribe();
-  }, []);
-
-  const initializeAuth = async () => {
-    try {
-      // Check for existing Supabase session
-      const { data: { session }, error } = await supabase.auth.getSession();
-      
-      if (error) {
-        console.warn('Supabase session error:', error.message);
-      }
-
-      if (session?.user) {
-        setSupabaseUser(session.user);
-        await fetchUserProfile(session.user.id);
-      } else {
-        // Check for demo session in localStorage
-        const demoUser = localStorage.getItem('demo-user');
-        if (demoUser) {
-          try {
-            const parsedUser = JSON.parse(demoUser);
-            setUser(parsedUser);
-            console.log('Restored demo session for:', parsedUser.email);
-          } catch (e) {
-            localStorage.removeItem('demo-user');
-          }
-        }
-      }
-    } catch (error) {
-      console.warn('Auth initialization error:', error);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const fetchUserProfile = async (userId: string) => {
+  const fetchUserProfile = async (userId: string, authUser?: SupabaseUser) => {
     try {
       const { data, error } = await supabase
         .from('profiles')
@@ -134,11 +77,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         console.warn('Profile fetch error:', error.message);
         
         // Create a basic profile from auth user
-        if (supabaseUser) {
+        const currentAuthUser = authUser || supabaseUser;
+        if (currentAuthUser) {
           const fallbackProfile: User = {
             id: userId,
-            email: supabaseUser.email || '',
-            full_name: supabaseUser.user_metadata?.full_name || 'User',
+            email: currentAuthUser.email || '',
+            full_name: currentAuthUser.user_metadata?.full_name || 'User',
             role: 'student',
             created_at: new Date().toISOString(),
             updated_at: new Date().toISOString(),
@@ -155,17 +99,86 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
+  const initializeAuth = async () => {
+    try {
+      // Check for existing Supabase session
+      const { data: { session }, error } = await supabase.auth.getSession();
+      
+      if (error) {
+        console.warn('Supabase session error:', error.message);
+      }
+
+      if (session?.user) {
+        setSupabaseUser(session.user);
+        await fetchUserProfile(session.user.id, session.user);
+      } else {
+        // Check for demo session in localStorage
+        const demoUser = localStorage.getItem('demo-user');
+        if (demoUser) {
+          try {
+            const parsedUser = JSON.parse(demoUser);
+            setUser(parsedUser);
+            console.log('Restored demo session for:', parsedUser.email);
+          } catch (e) {
+            console.warn('Invalid demo user data in localStorage');
+            localStorage.removeItem('demo-user');
+          }
+        }
+      }
+    } catch (error) {
+      console.warn('Auth initialization error:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    // Initialize authentication state
+    initializeAuth();
+
+    // Listen for auth state changes
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(
+      async (event, session) => {
+        console.log('Auth state changed:', event, session?.user?.email);
+        
+        if (session?.user) {
+          setSupabaseUser(session.user);
+          await fetchUserProfile(session.user.id, session.user);
+        } else {
+          setSupabaseUser(null);
+          setUser(null);
+          // Clear any stored demo session
+          localStorage.removeItem('demo-user');
+        }
+        setLoading(false);
+      }
+    );
+
+    return () => {
+      subscription.unsubscribe();
+    };
+  }, []);
+
   const signUp = async (email: string, password: string, fullName: string, role: 'student' | 'instructor') => {
     try {
       setLoading(true);
       
+      // Input validation
+      if (!email || !password || !fullName) {
+        throw new Error('All fields are required');
+      }
+
+      if (password.length < 6) {
+        throw new Error('Password must be at least 6 characters long');
+      }
+      
       // Try Supabase signup first
       const { data, error } = await supabase.auth.signUp({
-        email,
+        email: email.trim(),
         password,
         options: {
           data: {
-            full_name: fullName,
+            full_name: fullName.trim(),
             role: role,
           }
         }
@@ -177,8 +190,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         // Fallback to demo signup
         const newDemoUser: User = {
           id: `demo-${role}-${Date.now()}`,
-          email,
-          full_name: fullName,
+          email: email.trim(),
+          full_name: fullName.trim(),
           role,
           created_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),
@@ -197,8 +210,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             .from('profiles')
             .insert({
               id: data.user.id,
-              email,
-              full_name: fullName,
+              email: email.trim(),
+              full_name: fullName.trim(),
               role,
             });
 
@@ -208,11 +221,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         } catch (profileErr) {
           console.warn('Profile creation failed:', profileErr);
         }
+
+        setSupabaseUser(data.user);
       }
 
     } catch (error) {
       console.error('Signup error:', error);
-      throw new Error('Failed to create account. Please try again.');
+      throw error instanceof Error ? error : new Error('Failed to create account. Please try again.');
     } finally {
       setLoading(false);
     }
@@ -222,19 +237,27 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     try {
       setLoading(true);
 
+      // Input validation
+      if (!email || !password) {
+        throw new Error('Email and password are required');
+      }
+
+      const trimmedEmail = email.trim();
+
       // Check for demo users first
-      const demoUser = DEMO_USERS.find(u => u.email === email);
+      const demoUser = DEMO_USERS.find(u => u.email === trimmedEmail);
       if (demoUser && password === 'password') {
         setUser(demoUser);
+        setSupabaseUser(null); // Clear any existing Supabase user
         localStorage.setItem('demo-user', JSON.stringify(demoUser));
-        console.log('Demo login successful for:', email, '- Role:', demoUser.role);
+        console.log('Demo login successful for:', trimmedEmail, '- Role:', demoUser.role);
         return;
       }
 
       // Try Supabase authentication
       const { data, error } = await supabase.auth.signInWithPassword({
-        email,
-        password,
+        email: trimmedEmail,
+        password: password,
       });
 
       if (error) {
@@ -242,7 +265,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         throw new Error('Invalid email or password. Try demo credentials: student@example.com / password');
       }
 
-      console.log('Supabase login successful for:', email);
+      if (data?.user) {
+        setSupabaseUser(data.user);
+        await fetchUserProfile(data.user.id, data.user);
+        console.log('Supabase login successful for:', trimmedEmail);
+      }
 
     } catch (error) {
       console.error('Signin error:', error);
@@ -259,10 +286,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       // Clear demo session
       localStorage.removeItem('demo-user');
       
-      // Sign out from Supabase
-      const { error } = await supabase.auth.signOut();
-      if (error) {
-        console.warn('Supabase signout error:', error.message);
+      // Sign out from Supabase if there's a session
+      if (supabaseUser) {
+        const { error } = await supabase.auth.signOut();
+        if (error) {
+          console.warn('Supabase signout error:', error.message);
+        }
       }
 
       setUser(null);
@@ -277,14 +306,20 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   const updateProfile = async (updates: Partial<User>) => {
-    if (!user) throw new Error('No user logged in');
+    if (!user) {
+      throw new Error('No user logged in');
+    }
 
     try {
       setLoading(true);
 
       // Update demo user
       if (user.id.startsWith('demo-')) {
-        const updatedUser = { ...user, ...updates, updated_at: new Date().toISOString() };
+        const updatedUser = { 
+          ...user, 
+          ...updates, 
+          updated_at: new Date().toISOString() 
+        };
         setUser(updatedUser);
         localStorage.setItem('demo-user', JSON.stringify(updatedUser));
         console.log('Demo profile updated');
@@ -294,7 +329,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       // Update Supabase profile
       const { error } = await supabase
         .from('profiles')
-        .update({ ...updates, updated_at: new Date().toISOString() })
+        .update({ 
+          ...updates, 
+          updated_at: new Date().toISOString() 
+        })
         .eq('id', user.id);
 
       if (error) {
@@ -339,4 +377,35 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
 export function useAuth() {
   const context = useContext(AuthContext);
-  if
+  if (context === undefined) {
+    throw new Error('useAuth must be used within an AuthProvider');
+  }
+  return context;
+}
+
+// Utility hooks for common use cases
+export function useRequireAuth() {
+  const { user, loading } = useAuth();
+  
+  useEffect(() => {
+    if (!loading && !user) {
+      // Redirect to login if not authenticated
+      window.location.href = '/auth';
+    }
+  }, [user, loading]);
+
+  return { user, loading };
+}
+
+export function useRequireRole(role: 'student' | 'instructor') {
+  const { user, loading } = useAuth();
+  
+  useEffect(() => {
+    if (!loading && (!user || user.role !== role)) {
+      // Redirect if user doesn't have required role
+      window.location.href = '/unauthorized';
+    }
+  }, [user, loading, role]);
+
+  return { user, loading };
+}
