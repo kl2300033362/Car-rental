@@ -1,89 +1,86 @@
 import React from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
-import { AuthProvider, useAuth } from './hooks/useAuth';
-import { Header } from './components/Layout/Header';
-import { AuthForm } from './components/Auth/AuthForm';
-import { StudentDashboard } from './components/Dashboard/StudentDashboard';
-import { InstructorDashboard } from './components/Dashboard/InstructorDashboard';
-import { CourseCatalog } from './components/Courses/CourseCatalog';
-import { CourseDetail } from './components/Courses/CourseDetail';
-import { MyCourses } from './components/Courses/MyCourses';
-import { AssignmentList } from './components/Assignments/AssignmentList';
-import { DiscussionList } from './components/Discussions/DiscussionList';
+import { AuthProvider } from './hooks/useAuth';
 import { ProtectedRoute } from './components/Routes/ProtectedRoute';
+import { AuthForm } from './components/Auth/AuthForm';
+import { Dashboard } from './pages/Dashboard';
 
-function Dashboard() {
-  const { user } = useAuth();
+// Placeholder components for missing pages
+const Courses = () => (
+  <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+    <div className="text-center">
+      <h1 className="text-3xl font-bold text-gray-900">Courses</h1>
+      <p className="text-gray-600 mt-2">Course catalog will be implemented here</p>
+    </div>
+  </div>
+);
 
-  if (!user) return null;
+const Assignments = () => (
+  <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+    <div className="text-center">
+      <h1 className="text-3xl font-bold text-gray-900">Assignments</h1>
+      <p className="text-gray-600 mt-2">Assignment management will be implemented here</p>
+    </div>
+  </div>
+);
 
-  return user.role === 'student' ? <StudentDashboard /> : <InstructorDashboard />;
-}
+const InstructorDashboard = () => (
+  <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+    <div className="text-center">
+      <h1 className="text-3xl font-bold text-gray-900">Instructor Dashboard</h1>
+      <p className="text-gray-600 mt-2">Instructor-specific features will be implemented here</p>
+    </div>
+  </div>
+);
 
 function App() {
   return (
     <AuthProvider>
       <Router>
-        <div className="min-h-screen bg-gray-50">
-          <Header />
+        <div className="App">
           <Routes>
+            {/* Public routes */}
             <Route path="/auth" element={<AuthForm />} />
-            <Route
-              path="/"
+            
+            {/* Protected routes */}
+            <Route 
+              path="/" 
               element={
                 <ProtectedRoute>
                   <Dashboard />
                 </ProtectedRoute>
-              }
+              } 
             />
-            <Route
-              path="/courses"
+            
+            <Route 
+              path="/courses" 
               element={
                 <ProtectedRoute>
-                  <CourseCatalog />
+                  <Courses />
                 </ProtectedRoute>
-              }
+              } 
             />
-            <Route
-              path="/my-courses"
-              element={
-                <ProtectedRoute requireRole="student">
-                  <MyCourses />
-                </ProtectedRoute>
-              }
-            />
-            <Route
-              path="/courses/:id"
+            
+            <Route 
+              path="/assignments" 
               element={
                 <ProtectedRoute>
-                  <CourseDetail />
+                  <Assignments />
                 </ProtectedRoute>
-              }
+              } 
             />
-            <Route
-              path="/assignments"
-              element={
-                <ProtectedRoute>
-                  <AssignmentList />
-                </ProtectedRoute>
-              }
-            />
-            <Route
-              path="/discussions"
-              element={
-                <ProtectedRoute>
-                  <DiscussionList />
-                </ProtectedRoute>
-              }
-            />
-            <Route
-              path="/instructor"
+            
+            {/* Instructor-only routes */}
+            <Route 
+              path="/instructor" 
               element={
                 <ProtectedRoute requireRole="instructor">
                   <InstructorDashboard />
                 </ProtectedRoute>
-              }
+              } 
             />
+            
+            {/* Fallback route */}
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </div>
