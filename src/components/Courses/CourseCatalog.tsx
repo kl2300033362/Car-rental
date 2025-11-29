@@ -8,14 +8,18 @@ import { CourseCard } from './CourseCard';
 export function CourseCatalog() {
   const { user } = useAuth();
   const [courses, setCourses] = useState<Course[]>([]);
-  const [enrollments, setEnrollments] = useState<Enrollment[]>([]);
+  const [enrollments, setEnrollments] = useState<Array<{ course_id: string }>>([]);
   const [loading, setLoading] = useState(true);
+  const [page, setPage] = useState(0);
+  const [hasMore, setHasMore] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedDifficulty, setSelectedDifficulty] = useState<string>('');
   const [filteredCourses, setFilteredCourses] = useState<Course[]>([]);
+  const PAGE_SIZE = 12;
 
   useEffect(() => {
-    fetchCourses();
+    // load first page
+    fetchCourses(0, false);
     if (user?.role === 'student') {
       fetchEnrollments();
     }
@@ -25,8 +29,12 @@ export function CourseCatalog() {
     filterCourses();
   }, [courses, searchTerm, selectedDifficulty]);
 
-  const fetchCourses = async () => {
+  const fetchCourses = async (pageToLoad = 0, append = false) => {
     try {
+      setLoading((prev) => (pageToLoad === 0 ? true : prev));
+      const from = pageToLoad * PAGE_SIZE;
+      const to = from + PAGE_SIZE - 1;
+
       const { data, error } = await supabase
         .from('courses')
         .select(`
@@ -34,10 +42,20 @@ export function CourseCatalog() {
           instructor:profiles(*)
         `)
         .eq('is_published', true)
-        .order('created_at', { ascending: false });
+        .order('created_at', { ascending: false })
+        .range(from, to);
 
       if (error) throw error;
-      setCourses(data || []);
+
+      const results: Course[] = data || [];
+      if (append) {
+        setCourses((prev) => [...prev, ...results]);
+      } else {
+        setCourses(results);
+      }
+
+      setHasMore(results.length === PAGE_SIZE);
+      setPage(pageToLoad);
     } catch (error) {
       console.error('Error fetching courses:', error);
     } finally {
@@ -177,6 +195,17 @@ export function CourseCatalog() {
                 enrolled={isEnrolled(course.id)}
               />
             ))}
+          </div>
+        )}
+        {/* Load more */}
+        {hasMore && !loading && (
+          <div className="mt-8 text-center">
+            <button
+              onClick={() => fetchCourses(page + 1, true)}
+              className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700"
+            >
+              Load more
+            </button>
           </div>
         )}
       </div>

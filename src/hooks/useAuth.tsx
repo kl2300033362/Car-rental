@@ -67,6 +67,31 @@ const DEMO_USERS: User[] = [
   }
 ];
 
+// Local storage keys for fallback auth
+const LOCAL_USERS_KEY = 'local-users';
+const LOCAL_SESSION_KEY = 'local-session';
+
+type LocalUser = User & { password?: string };
+
+const readLocalUsers = (): LocalUser[] => {
+  try {
+    const raw = localStorage.getItem(LOCAL_USERS_KEY);
+    if (!raw) return [];
+    return JSON.parse(raw) as LocalUser[];
+  } catch (e) {
+    console.warn('Failed to read local users', e);
+    return [];
+  }
+};
+
+const saveLocalUsers = (users: LocalUser[]) => {
+  try {
+    localStorage.setItem(LOCAL_USERS_KEY, JSON.stringify(users));
+  } catch (e) {
+    console.warn('Failed to save local users', e);
+  }
+};
+
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [supabaseUser, setSupabaseUser] = useState<SupabaseUser | null>(null);
@@ -151,22 +176,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         }
       }
 
-      // Always check for demo session as fallback
-      const demoUser = localStorage.getItem('demo-user');
-      if (demoUser && !user) {
-        try {
-          const parsedUser = JSON.parse(demoUser) as User;
-          // Validate the demo user structure
-          if (parsedUser.id && parsedUser.email && parsedUser.role) {
-            setUser(parsedUser);
-            console.log('🎭 Restored demo session for:', parsedUser.email, '- Role:', parsedUser.role);
+      // If Supabase not connected, check local session (local users stored in localStorage)
+      if (!isConnected) {
+        const sessionId = localStorage.getItem(LOCAL_SESSION_KEY);
+        if (sessionId) {
+          const locals = readLocalUsers();
+          const localUser = locals.find(u => u.id === sessionId);
+          if (localUser) {
+            setUser(localUser as User);
+            console.log('🟢 Restored local session for:', localUser.email);
           } else {
-            console.warn('⚠️ Invalid demo user data structure');
-            localStorage.removeItem('demo-user');
+            localStorage.removeItem(LOCAL_SESSION_KEY);
           }
-        } catch (e) {
-          console.warn('⚠️ Invalid demo user data in localStorage:', e);
-          localStorage.removeItem('demo-user');
         }
       }
 
@@ -191,10 +212,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           await fetchUserProfile(session.user.id, session.user);
         } else {
           setSupabaseUser(null);
-          // Only clear user if it's not a demo user
-          if (user && !user.id.startsWith('demo-')) {
+          // If there's a local session, preserve it; otherwise clear user
+          const sessionId = localStorage.getItem(LOCAL_SESSION_KEY);
+          if (!sessionId) {
             setUser(null);
             localStorage.removeItem('demo-user');
+          } else {
+            const locals = readLocalUsers();
+            const localUser = locals.find(u => u.id === sessionId);
+            if (localUser) setUser(localUser as User);
+            else {
+              setUser(null);
+              localStorage.removeItem(LOCAL_SESSION_KEY);
+            }
           }
         }
         setLoading(false);
@@ -228,7 +258,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       
       // Check connection status
       const isConnected = await checkConnection();
-      
+
       if (isConnected) {
         // Try Supabase signup
         const { data, error } = await supabase.auth.signUp({
@@ -259,10 +289,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           return;
         }
       }
-      
-      // Fallback to demo signup
-      const newDemoUser: User = {
-        id: `demo-${role}-${Date.now()}`,
+
+      // Fallback to local signup (stored in localStorage)
+      const locals = readLocalUsers();
+      const exists = locals.find(u => u.email === trimmedEmail);
+      if (exists) {
+        throw new Error('An account with that email already exists (local)');
+      }
+
+      const newLocalUser: LocalUser = {
+        id: `local-${Date.now()}`,
         email: trimmedEmail,
         full_name: trimmedFullName,
         role,
@@ -270,11 +306,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         bio: null,
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
+        password,
       };
-      
-      setUser(newDemoUser);
-      localStorage.setItem('demo-user', JSON.stringify(newDemoUser));
-      console.log('🎭 Created demo account for:', trimmedEmail, '- Role:', role);
+
+      locals.push(newLocalUser);
+      saveLocalUsers(locals);
+      setUser(newLocalUser);
+      localStorage.setItem(LOCAL_SESSION_KEY, newLocalUser.id);
+      console.log('🟢 Created local account for:', trimmedEmail, '- Role:', role);
 
     } catch (error) {
       console.error('❌ Signup error:', error);
@@ -296,18 +335,30 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       const trimmedEmail = email.trim();
 
       // Check for demo users first (always available)
+      // Check local users stored in localStorage
+      const localUsers = readLocalUsers();
+      const localFound = localUsers.find(u => u.email === trimmedEmail && u.password === password);
+      if (localFound) {
+        setUser(localFound as User);
+        setSupabaseUser(null);
+        localStorage.setItem(LOCAL_SESSION_KEY, localFound.id);
+        console.log('🟢 Local login successful for:', trimmedEmail, '- Role:', localFound.role);
+        return;
+      }
+
+      // Check demo users (preset) - password for these is 'password'
       const demoUser = DEMO_USERS.find(u => u.email === trimmedEmail);
       if (demoUser && password === 'password') {
         setUser(demoUser);
         setSupabaseUser(null); // Clear any existing Supabase user
-        localStorage.setItem('demo-user', JSON.stringify(demoUser));
+        localStorage.setItem(LOCAL_SESSION_KEY, demoUser.id);
         console.log('🎭 Demo login successful for:', trimmedEmail, '- Role:', demoUser.role);
         return;
       }
 
       // Check connection status before trying Supabase
       const isConnected = await checkConnection();
-      
+
       if (isConnected) {
         // Try Supabase authentication
         const { data, error } = await supabase.auth.signInWithPassword({
@@ -342,6 +393,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       
       // Clear demo session
       localStorage.removeItem('demo-user');
+      localStorage.removeItem(LOCAL_SESSION_KEY);
       
       // Sign out from Supabase if there's a session
       if (supabaseUser) {
@@ -441,4 +493,31 @@ export function useAuth() {
     throw new Error('useAuth must be used within an AuthProvider');
   }
   return context;
+}
+
+// Utility hooks for common use cases
+export function useRequireAuth() {
+  const { user, loading } = useAuth();
+  
+  useEffect(() => {
+    if (!loading && !user) {
+      // Redirect to login if not authenticated
+      window.location.href = '/auth';
+    }
+  }, [user, loading]);
+
+  return { user, loading };
+}
+
+export function useRequireRole(role: 'student' | 'instructor') {
+  const { user, loading } = useAuth();
+  
+  useEffect(() => {
+    if (!loading && (!user || user.role !== role)) {
+      // Redirect if user doesn't have required role
+      window.location.href = '/unauthorized';
+    }
+  }, [user, loading, role]);
+
+  return { user, loading };
 }
